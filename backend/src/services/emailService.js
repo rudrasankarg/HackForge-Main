@@ -1,0 +1,161 @@
+const nodemailer = require('nodemailer');
+
+const createTransporter = () => {
+  if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+    return nodemailer.createTransport({
+      host: process.env.SMTP_HOST || 'smtp.gmail.com',
+      port: parseInt(process.env.SMTP_PORT) || 587,
+      secure: false,
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      },
+    });
+  }
+  return null;
+};
+
+const sendEmail = async (to, subject, html) => {
+  // 1. Check if Brevo API Key is present (HTTPS - Not Blocked by Render)
+  if (process.env.BREVO_API_KEY) {
+    try {
+      const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'accept': 'application/json',
+          'api-key': process.env.BREVO_API_KEY,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          sender: { name: 'HackForge', email: process.env.SMTP_USER || 'noreply@hackforge.dev' },
+          to: [{ email: to }],
+          subject,
+          htmlContent: html
+        })
+      });
+      if (res.ok) {
+        console.log(`[EMAIL BREVO] Sent successfully to: ${to}`);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        console.error(`[EMAIL BREVO ERROR]`, errData);
+      }
+    } catch (err) {
+      console.error(`[EMAIL BREVO ERROR] Failed to send:`, err.message);
+    }
+    // Return immediately if API key was present - do not fall back to SMTP which hangs on Render
+    return;
+  }
+
+  // 2. Check if Resend API Key is present (HTTPS - Not Blocked by Render)
+  if (process.env.RESEND_API_KEY) {
+    try {
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          from: process.env.SMTP_FROM || 'onboarding@resend.dev',
+          to: [to],
+          subject,
+          html
+        })
+      });
+      if (res.ok) {
+        console.log(`[EMAIL RESEND] Sent successfully to: ${to}`);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        console.error(`[EMAIL RESEND ERROR]`, errData);
+      }
+    } catch (err) {
+      console.error(`[EMAIL RESEND ERROR] Failed to send:`, err.message);
+    }
+    // Return immediately if API key was present - do not fall back to SMTP which hangs on Render
+    return;
+  }
+
+  // 3. Fallback to standard SMTP
+  const transporter = createTransporter();
+  if (!transporter) {
+    console.log(`[EMAIL FALLBACK] To: ${to} | Subject: ${subject}`);
+    return;
+  }
+  try {
+    await transporter.sendMail({
+      from: process.env.SMTP_FROM || 'HackForge <noreply@hackforge.dev>',
+      to,
+      subject,
+      html,
+    });
+  } catch (err) {
+    console.error(`[EMAIL ERROR] Failed to send email via SMTP:`, err.message);
+    console.log(`[EMAIL FALLBACK] To: ${to} | Subject: ${subject}`);
+  }
+};
+
+const sendOtpEmail = async (to, code, name) => {
+  console.log(`[OTP CODE] Verification code for ${to} is: ${code}`);
+  const greetingName = name || to.split('@')[0].split('.').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px; color: #111827; background-color: #ffffff;">
+      <div style="margin-bottom: 24px;">
+        <span style="font-size: 20px; font-weight: 700; color: #111827; letter-spacing: -0.5px;">HackForge</span>
+      </div>
+      <div style="height: 1px; background-color: #e5e7eb; margin-bottom: 24px;"></div>
+      <p style="font-size: 15px; line-height: 24px; color: #111827; margin: 0 0 16px 0;">Hello ${greetingName},</p>
+      <p style="font-size: 15px; line-height: 24px; color: #374151; margin: 0 0 24px 0;">We received a request to verify the email address <strong>${to}</strong>. Use the following verification code to proceed:</p>
+      <div style="background-color: #f3f4f6; border-radius: 8px; padding: 16px; text-align: center; margin-bottom: 24px;">
+        <span style="font-size: 24px; font-weight: 700; letter-spacing: 4px; color: #111827; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; display: inline-block; white-space: nowrap;">${code}</span>
+      </div>
+      <p style="font-size: 13px; line-height: 20px; color: #6b7280; margin: 0 0 24px 0;">This code is valid for <strong>10 minutes</strong>. Do not share it with anyone.</p>
+      <div style="height: 1px; background-color: #e5e7eb; margin-top: 24px; margin-bottom: 16px;"></div>
+      <p style="font-size: 12px; line-height: 18px; color: #9ca3af; margin: 0;">If you did not request this code, you can safely ignore this email.</p>
+    </div>
+  `;
+  await sendEmail(to, 'HackForge — Email Verification Code', html);
+};
+
+const sendWelcomeEmail = async (to, name) => {
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px; color: #111827; background-color: #ffffff;">
+      <div style="margin-bottom: 24px;">
+        <span style="font-size: 20px; font-weight: 700; color: #111827; letter-spacing: -0.5px;">HackForge</span>
+      </div>
+      <div style="height: 1px; background-color: #e5e7eb; margin-bottom: 24px;"></div>
+      <h2 style="font-size: 18px; font-weight: 700; color: #111827; margin: 0 0 12px 0;">Welcome to HackForge, ${name}!</h2>
+      <p style="font-size: 15px; line-height: 24px; color: #374151; margin: 0 0 24px 0;">Your account has been created successfully. You can now log in, join or create a team, and submit projects.</p>
+      <div style="margin-bottom: 24px;">
+        <a href="${process.env.CLIENT_ORIGIN || 'http://localhost:3000'}/login" style="display: inline-block; background-color: #111827; color: #ffffff; padding: 12px 24px; font-size: 14px; font-weight: 600; text-decoration: none; border-radius: 6px;">Go to Platform</a>
+      </div>
+      <div style="height: 1px; background-color: #e5e7eb; margin-top: 24px; margin-bottom: 16px;"></div>
+      <p style="font-size: 12px; line-height: 18px; color: #9ca3af; margin: 0;">HackForge team</p>
+    </div>
+  `;
+  await sendEmail(to, 'Welcome to HackForge', html);
+};
+
+const sendResultEmail = async (to, name, rank, score, feedbackText) => {
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px; color: #111827; background-color: #ffffff;">
+      <div style="margin-bottom: 24px;">
+        <span style="font-size: 20px; font-weight: 700; color: #111827; letter-spacing: -0.5px;">HackForge</span>
+      </div>
+      <div style="height: 1px; background-color: #e5e7eb; margin-bottom: 24px;"></div>
+      <h2 style="font-size: 18px; font-weight: 700; color: #111827; margin: 0 0 12px 0;">Your Hackathon results are ready</h2>
+      <p style="font-size: 15px; line-height: 24px; color: #374151; margin: 0 0 16px 0;">Hello ${name},</p>
+      <p style="font-size: 15px; line-height: 24px; color: #374151; margin: 0 0 16px 0;">Your team finished at rank <strong style="color: #111827;">#${rank}</strong> with a final score of <strong>${score.toFixed(1)}</strong>.</p>
+      <div style="background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 16px; margin: 16px 0; font-size: 14px; line-height: 20px; color: #4b5563; font-style: italic;">
+        "${feedbackText}"
+      </div>
+      <div style="margin-bottom: 24px; margin-top: 24px;">
+        <a href="${process.env.CLIENT_ORIGIN || 'http://localhost:3000'}/login" style="display: inline-block; background-color: #111827; color: #ffffff; padding: 12px 24px; font-size: 14px; font-weight: 600; text-decoration: none; border-radius: 6px;">View Leaderboard</a>
+      </div>
+      <div style="height: 1px; background-color: #e5e7eb; margin-top: 24px; margin-bottom: 16px;"></div>
+      <p style="font-size: 12px; line-height: 18px; color: #9ca3af; margin: 0;">HackForge team</p>
+    </div>
+  `;
+  await sendEmail(to, 'HackForge — Your Hackathon Results', html);
+};
+
+module.exports = { sendOtpEmail, sendWelcomeEmail, sendResultEmail };
