@@ -118,9 +118,10 @@ Open `http://localhost:3000`
 | Participant | zara@bits.ac.in | Part@123 |
 
 > **Login portals are separate:**
-> - Participant + Reviewer: `http://localhost:3000/login`
-> - Organizer (Admin): `http://localhost:3000/admin/login`
-
+> - Participant
+> - Organizer
+> - Admin
+> - Reviewer
 ---
 
 ## Docker Deployment
